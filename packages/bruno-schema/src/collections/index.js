@@ -504,7 +504,10 @@ const wsSettingsSchema = Yup.object({
     timeout: Yup.number()
       .default(500),
     keepAliveInterval: Yup.number()
-      .default(0)
+      .default(0),
+    transport: Yup.string()
+      .oneOf(['websocket', 'socketio'])
+      .nullable()
   }).noUnknown(true)
     .strict()
     .nullable()

@@ -1,6 +1,7 @@
 export { addDigestInterceptor, getOAuth2Token } from './auth';
 export { GrpcClient, generateGrpcSampleMessage } from './grpc';
 export { WsClient } from './ws/ws-client';
+export { SocketIoClient } from './ws/socket-io-client';
 export { default as cookies } from './cookies';
 
 export { getCACertificates } from './utils/ca-cert';

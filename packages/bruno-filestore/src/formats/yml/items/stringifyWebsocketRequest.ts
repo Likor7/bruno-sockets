@@ -1,6 +1,12 @@
 import type { Item as BrunoItem } from '@usebruno/schema-types/collection/item';
 import type { WebSocketRequest as BrunoWebSocketRequest } from '@usebruno/schema-types/requests/websocket';
-import type { WebSocketRequest, WebSocketMessage, WebSocketRequestInfo, WebSocketRequestDetails, WebSocketRequestRuntime } from '@opencollection/types/requests/websocket';
+import type {
+  WebSocketRequest,
+  WebSocketMessage,
+  WebSocketRequestInfo,
+  WebSocketRequestDetails,
+  WebSocketRequestRuntime
+} from '@opencollection/types/requests/websocket';
 import type { Auth } from '@opencollection/types/common/auth';
 import type { Scripts } from '@opencollection/types/common/scripts';
 import type { Variable } from '@opencollection/types/common/variables';
@@ -36,7 +42,8 @@ const stringifyWebsocketRequest = (item: BrunoItem): string => {
     };
 
     // headers
-    const headers: HttpRequestHeader[] | undefined = toOpenCollectionHttpHeaders(brunoRequest.headers);
+    const headers: HttpRequestHeader[] | undefined
+      = toOpenCollectionHttpHeaders(brunoRequest.headers);
     if (headers) {
       websocket.headers = headers;
     }
@@ -72,7 +79,9 @@ const stringifyWebsocketRequest = (item: BrunoItem): string => {
     let hasRuntime = false;
 
     // variables
-    const variables: Variable[] | undefined = toOpenCollectionVariables(brunoRequest.vars);
+    const variables: Variable[] | undefined = toOpenCollectionVariables(
+      brunoRequest.vars
+    );
     if (variables) {
       runtime.variables = variables;
       hasRuntime = true;
@@ -90,13 +99,24 @@ const stringifyWebsocketRequest = (item: BrunoItem): string => {
     }
 
     // settings
-    const wsSettings = item.settings as Record<string, number | string | undefined> | undefined;
+    const wsSettings = item.settings as
+      | Record<string, number | string | undefined>
+      | undefined;
     if (wsSettings) {
       ocRequest.settings = {};
       const timeout = Number(wsSettings.timeout);
       ocRequest.settings.timeout = !isNaN(timeout) ? timeout : 0;
       const keepAliveInterval = Number(wsSettings.keepAliveInterval);
-      ocRequest.settings.keepAliveInterval = !isNaN(keepAliveInterval) ? keepAliveInterval : 0;
+      ocRequest.settings.keepAliveInterval = !isNaN(keepAliveInterval)
+        ? keepAliveInterval
+        : 0;
+      const rawTransport = String(
+        wsSettings.transport || 'websocket'
+      ).toLowerCase();
+      if (rawTransport === 'websocket' || rawTransport === 'socketio') {
+        (ocRequest.settings as Record<string, unknown>).transport
+          = rawTransport;
+      }
     }
 
     // docs

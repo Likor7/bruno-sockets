@@ -22,6 +22,7 @@ export interface WebSocketItemSettings {
   settings?: {
     timeout?: number | null;
     keepAliveInterval?: number | null;
+    transport?: 'websocket' | 'socketio' | null;
   } | null;
 }
 

@@ -70,9 +70,10 @@ const parseWebsocketRequest = (ocRequest: WebSocketRequest): BrunoItem => {
   }
 
   // settings
-  const wsSettings: Record<string, number> = {
+  const wsSettings: Record<string, number | string> = {
     timeout: 0,
-    keepAliveInterval: 0
+    keepAliveInterval: 0,
+    transport: 'websocket'
   };
 
   if (ocRequest.settings) {
@@ -81,6 +82,10 @@ const parseWebsocketRequest = (ocRequest: WebSocketRequest): BrunoItem => {
     }
     if (typeof ocRequest.settings.keepAliveInterval === 'number') {
       wsSettings.keepAliveInterval = ocRequest.settings.keepAliveInterval;
+    }
+    const rawTransport = (ocRequest.settings as { transport?: unknown }).transport;
+    if (rawTransport === 'socketio' || rawTransport === 'websocket') {
+      wsSettings.transport = rawTransport;
     }
   }
 

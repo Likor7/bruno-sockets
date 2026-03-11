@@ -1,5 +1,5 @@
 const { ipcMain, app } = require('electron');
-const { WsClient } = require('@usebruno/requests');
+const { WsClient, SocketIoClient } = require('@usebruno/requests');
 const { safeParseJSON, safeStringifyJSON } = require('../../utils/common');
 const { cloneDeep, each, get } = require('lodash');
 const interpolateVars = require('./interpolate-vars');
@@ -23,6 +23,19 @@ const {
 const { interpolateString } = require('./interpolate-string');
 const path = require('node:path');
 const { setAuthHeaders } = require('./prepare-request');
+
+const WS_TRANSPORT = {
+  WEBSOCKET: 'websocket',
+  SOCKET_IO: 'socketio'
+};
+
+const normalizeWsTransport = (transport) => {
+  const normalizedTransport = String(transport || '').toLowerCase();
+  if (normalizedTransport === WS_TRANSPORT.SOCKET_IO) {
+    return WS_TRANSPORT.SOCKET_IO;
+  }
+  return WS_TRANSPORT.WEBSOCKET;
+};
 
 const prepareWsRequest = async (item, collection, environment, runtimeVariables, certsAndProxyConfig = {}) => {
   const request = item.draft ? item.draft.request : item.request;
@@ -282,8 +295,10 @@ const prepareWsRequest = async (item, collection, environment, runtimeVariables,
   return wsRequest;
 };
 
-// Creating wsClient at module level so it can be accessed from window-all-closed event
+// Creating clients at module level so they can be accessed from other IPC modules
 let wsClient;
+let socketIoClient;
+let requestTransportByRequestUid = new Map();
 
 /**
  * Register IPC handlers for WebSocket
@@ -297,7 +312,53 @@ const registerWsEventHandlers = (window) => {
     }
   };
 
-  wsClient = new WsClient(sendEvent);
+  const getAllActiveConnectionIds = () => {
+    const wsConnectionIds = wsClient?.getActiveConnectionIds?.() || [];
+    const socketIoConnectionIds = socketIoClient?.getActiveConnectionIds?.() || [];
+    return [...new Set([...wsConnectionIds, ...socketIoConnectionIds])];
+  };
+
+  const sendTransportEvent = (eventName, ...args) => {
+    if (eventName === 'main:ws:close') {
+      const [requestId] = args;
+      requestTransportByRequestUid.delete(requestId);
+    }
+
+    if (eventName === 'main:ws:connections-changed') {
+      const [data = {}] = args;
+      sendEvent(eventName, {
+        ...data,
+        activeConnectionIds: getAllActiveConnectionIds()
+      });
+      return;
+    }
+
+    sendEvent(eventName, ...args);
+  };
+
+  const getClientForTransport = (transport) => {
+    const normalizedTransport = normalizeWsTransport(transport);
+    return normalizedTransport === WS_TRANSPORT.SOCKET_IO ? socketIoClient : wsClient;
+  };
+
+  const getTransportForItem = (item = {}) => {
+    const draftTransport = get(item, 'draft.settings.transport');
+    const savedTransport = get(item, 'settings.transport');
+    return normalizeWsTransport(draftTransport || savedTransport);
+  };
+
+  const getTransportForRequestId = (requestId, fallbackTransport = WS_TRANSPORT.WEBSOCKET) => {
+    return normalizeWsTransport(requestTransportByRequestUid.get(requestId) || fallbackTransport);
+  };
+
+  const getClientForRequestId = (requestId, fallbackTransport = WS_TRANSPORT.WEBSOCKET) => {
+    const transport = getTransportForRequestId(requestId, fallbackTransport);
+    return getClientForTransport(transport);
+  };
+
+  requestTransportByRequestUid = new Map();
+  wsClient = new WsClient(sendTransportEvent);
+  socketIoClient = new SocketIoClient(sendTransportEvent);
 
   // Start a new WebSocket connection
   ipcMain.handle(
@@ -306,6 +367,9 @@ const registerWsEventHandlers = (window) => {
       try {
         const requestCopy = cloneDeep(request);
         const preparedRequest = await prepareWsRequest(requestCopy, collection, environment, runtimeVariables, {});
+        const transport = normalizeWsTransport(settings?.transport);
+        const client = getClientForTransport(transport);
+        const previousTransport = requestTransportByRequestUid.get(preparedRequest.uid);
         const connectOnly = options?.connectOnly ?? false;
         const requestSent = {
           type: 'request',
@@ -315,11 +379,19 @@ const registerWsEventHandlers = (window) => {
           timestamp: Date.now()
         };
 
+        if (previousTransport && previousTransport !== transport) {
+          try {
+            getClientForTransport(previousTransport).close(preparedRequest.uid, 1000, 'Switching transport');
+          } catch (error) {}
+        }
+
         if (!connectOnly) {
           const hasMessages = preparedRequest.body.ws.some((msg) => msg.content.length);
           if (hasMessages) {
             preparedRequest.body.ws.forEach((message) => {
-              wsClient.queueMessage(preparedRequest.uid, collection.uid, message.content);
+              client.queueMessage(preparedRequest.uid, collection.uid, message.content, message.type, {
+                eventName: message.name
+              });
             });
           }
         }
@@ -348,7 +420,7 @@ const registerWsEventHandlers = (window) => {
         };
 
         // Start WebSocket connection
-        await wsClient.startConnection({
+        await client.startConnection({
           request: preparedRequest,
           collection,
           options: {
@@ -358,6 +430,7 @@ const registerWsEventHandlers = (window) => {
             sslOptions
           }
         });
+        requestTransportByRequestUid.set(preparedRequest.uid, transport);
 
         sendEvent('main:ws:request', preparedRequest.uid, collection.uid, requestSent);
 
@@ -390,7 +463,7 @@ const registerWsEventHandlers = (window) => {
   // Get all active connection IDs
   ipcMain.handle('renderer:ws:get-active-connections', (event) => {
     try {
-      const activeConnectionIds = wsClient.getActiveConnectionIds();
+      const activeConnectionIds = getAllActiveConnectionIds();
       return { success: true, activeConnectionIds };
     } catch (error) {
       console.error('Error getting active connections:', error);
@@ -404,6 +477,8 @@ const registerWsEventHandlers = (window) => {
       try {
         const itemCopy = cloneDeep(item);
         const preparedRequest = await prepareWsRequest(itemCopy, collection, environment, runtimeVariables, {});
+        const transport = getTransportForRequestId(preparedRequest.uid, getTransportForItem(itemCopy));
+        const client = getClientForTransport(transport);
 
         // If messageContent is provided, find and queue that specific message (interpolated)
         // Otherwise, queue all messages
@@ -415,10 +490,12 @@ const registerWsEventHandlers = (window) => {
           if (messageIndex >= 0 && preparedRequest.body?.ws?.[messageIndex]) {
             // Queue the interpolated version of the specific message
             const message = preparedRequest.body.ws[messageIndex];
-            wsClient.queueMessage(preparedRequest.uid, collection.uid, message.content, message.type);
+            client.queueMessage(preparedRequest.uid, collection.uid, message.content, message.type, {
+              eventName: message.name
+            });
           } else {
             // Message not found in request body, queue as-is (shouldn't happen in normal flow)
-            wsClient.queueMessage(preparedRequest.uid, collection.uid, messageContent);
+            client.queueMessage(preparedRequest.uid, collection.uid, messageContent);
           }
         } else {
           // Queue all messages (they are already interpolated by prepareWsRequest -> interpolateVars)
@@ -426,7 +503,9 @@ const registerWsEventHandlers = (window) => {
             preparedRequest.body.ws
               .filter((message) => message && message.content)
               .forEach((message) => {
-                wsClient.queueMessage(preparedRequest.uid, collection.uid, message.content, message.type);
+                client.queueMessage(preparedRequest.uid, collection.uid, message.content, message.type, {
+                  eventName: message.name
+                });
               });
           }
         }
@@ -442,7 +521,8 @@ const registerWsEventHandlers = (window) => {
   // Send a message to an existing WebSocket connection
   ipcMain.handle('renderer:ws:send-message', (event, requestId, collectionUid, message) => {
     try {
-      wsClient.sendMessage(requestId, collectionUid, message);
+      const client = getClientForRequestId(requestId);
+      client.sendMessage(requestId, collectionUid, message);
       return { success: true };
     } catch (error) {
       console.error('Error sending WebSocket message:', error);
@@ -453,7 +533,8 @@ const registerWsEventHandlers = (window) => {
   // Close a WebSocket connection
   ipcMain.handle('renderer:ws:close-connection', (event, requestId, code, reason) => {
     try {
-      wsClient.close(requestId, code, reason);
+      const client = getClientForRequestId(requestId);
+      client.close(requestId, code, reason);
       return { success: true };
     } catch (error) {
       console.error('Error closing WebSocket connection:', error);
@@ -464,7 +545,8 @@ const registerWsEventHandlers = (window) => {
   // Check if a WebSocket connection is active
   ipcMain.handle('renderer:ws:is-connection-active', (event, requestId) => {
     try {
-      const isActive = wsClient.isConnectionActive(requestId);
+      const client = getClientForRequestId(requestId);
+      const isActive = client.isConnectionActive(requestId);
       return { success: true, isActive };
     } catch (error) {
       console.error('Error checking WebSocket connection status:', error);
@@ -479,7 +561,8 @@ const registerWsEventHandlers = (window) => {
    */
   ipcMain.handle('renderer:ws:connection-status', (event, requestId) => {
     try {
-      const status = wsClient.connectionStatus(requestId);
+      const client = getClientForRequestId(requestId);
+      const status = client.connectionStatus(requestId);
       return { success: true, status };
     } catch (error) {
       console.error('Error getting WebSocket connection status:', error);

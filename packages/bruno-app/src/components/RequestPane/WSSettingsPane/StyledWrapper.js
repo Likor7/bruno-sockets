@@ -12,6 +12,14 @@ const StyledWrapper = styled.div`
     }
   }
 
+  .ws-transport-select {
+    background: transparent;
+    border: 0;
+    outline: 0;
+    width: 100%;
+    color: ${(props) => props.theme.text};
+  }
+
   .tooltip-mod {
     width: 150px !important;
 

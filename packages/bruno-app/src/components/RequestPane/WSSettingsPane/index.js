@@ -28,12 +28,17 @@ const ERRORS = {
   }
 };
 
+const WS_TRANSPORT = {
+  WEBSOCKET: 'websocket',
+  SOCKET_IO: 'socketio'
+};
+
 const WSSettingsPane = ({ item, collection }) => {
   const dispatch = useDispatch();
   const { storedTheme } = useTheme();
   const requestPreferences = useSelector((state) => state.app.preferences.request);
 
-  const { timeout: _connectionTimeout, keepAliveInterval = 0 } = getPropertyFromDraftOrRequest('settings', item);
+  const { timeout: _connectionTimeout, keepAliveInterval = 0, transport = WS_TRANSPORT.WEBSOCKET } = getPropertyFromDraftOrRequest('settings', item);
 
   const connectionTimeout = _connectionTimeout ?? requestPreferences.timeout;
 
@@ -125,6 +130,35 @@ const WSSettingsPane = ({ item, collection }) => {
                 collection={collection}
               />
             </ToolHint>
+          </div>
+        </div>
+
+        <div>
+          <label className="font-medium mb-2">Transport</label>
+          <InfoTip
+            infotipId="setting-ws-transport"
+            className="tooltip-mod max-w-lg"
+            content={(
+              <div>
+                <p>
+                  <span>Choose protocol implementation for the connection.</span>
+                </p>
+                <p className="mt-2">WebSocket for RFC6455 servers, Socket.IO for Engine.IO/Socket.IO servers.</p>
+              </div>
+            )}
+          />
+        </div>
+        <div>
+          <div className="single-line-editor-wrapper flex items-center">
+            <select
+              value={transport}
+              onChange={(event) => updateSetting('transport', event.target.value)}
+              className="ws-transport-select w-full"
+              data-testid="ws-settings-transport"
+            >
+              <option value={WS_TRANSPORT.WEBSOCKET}>WebSocket</option>
+              <option value={WS_TRANSPORT.SOCKET_IO}>Socket.IO</option>
+            </select>
           </div>
         </div>
       </section>
