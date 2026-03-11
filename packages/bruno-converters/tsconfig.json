@@ -20,9 +20,11 @@
     "typeRoots": ["../../node_modules/@types", "./node_modules/@types"],
     "baseUrl": "../..",
     "paths": {
-        "@usebruno/schema-types": ["packages/bruno-schema-types/src/index.ts"],
-        "@usebruno/schema-types/*": ["packages/bruno-schema-types/src/*"],
-      "@opencollection/types": ["node_modules/@opencollection/types/dist/opencollection.d.ts"],
+      "@usebruno/schema-types": ["packages/bruno-schema-types/src/index.ts"],
+      "@usebruno/schema-types/*": ["packages/bruno-schema-types/src/*"],
+      "@opencollection/types": [
+        "node_modules/@opencollection/types/dist/opencollection.d.ts"
+      ],
       "@opencollection/types/*": ["node_modules/@opencollection/types/dist/*"]
     }
   },
